@@ -28,23 +28,92 @@ struct EmojiArtDocumentView: View {
                         .position(convertFromEmojiCoordinates((0,0), in: geometry))
                 )
                     .gesture(doubleTapToZoom(in: geometry.size))
+                    .onTapGesture {
+                        selectedEmojis = []
+                    }
                 if document.backgroundImageFetchStatus == .fetching {
                     ProgressView().scaleEffect(2)
                 } else {
                     ForEach(document.emojis) { emoji in
                         Text(emoji.text)
                             .font(.system(size: fontSize(for: emoji)))
-                            .scaleEffect(zoomScale)
+                            .scaleEffect(emojiZoomScale(for: emoji))
                             .position(position(for: emoji, in: geometry))
+                            .offset(emojiIsSelected(emoji) ? emojiOffset : CGSize.zero)
+                            .onTapGesture {
+                                selectedEmojis.toggleMembership(of: emoji)
+                            }
+                            .gesture(emojiIsSelected(emoji) ? dragSelectedEmojis(from: emoji) : nil)
+                            .shadow(color: emojiIsSelected(emoji) ? .red : .clear, radius: 10)
                     }
+                }
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            deleteSelectedEmojis()
+                        }, label: {
+                            Image(systemName: hasSelection ? "trash" : "trash.slash")
+                                .font(.largeTitle)
+                                .shadow(color: Color.blue, radius: 10)
+                                .padding()
+                        })
+                    }
+                    Spacer()
                 }
             }
             .clipped()
+            .onReceive(document.$backgroundImage) { image in
+                withAnimation {
+                    zoomToFit(image, in: geometry.size)
+                }
+            }
             .onDrop(of: [.plainText, .url, .image], isTargeted: nil) { providers, location in
                 return drop(providers: providers, at: location, in: geometry)
             }
             .gesture(panGesture().simultaneously(with: zoomGesture()))
         }
+    }
+    
+    private func deleteSelectedEmojis() {
+        for selectedEmoji in selectedEmojis {
+            document.removeEmoji(selectedEmoji)
+        }
+        selectedEmojis = []
+    }
+    
+    @GestureState private var gestureEmojiOffset: CGSize = .zero
+    private var emojiOffset: CGSize {
+        gestureEmojiOffset * zoomScale // UtilityExtension to CGSize
+    }
+    
+    private func dragSelectedEmojis(from emoji: EmojiArtModel.Emoji) -> some Gesture {
+        let draggedEmojiIsSelected = emojiIsSelected(emoji)
+        return DragGesture()
+            .updating($gestureEmojiOffset) { latestDragGestureValue, gestureEmojiOffset, _ in
+                if draggedEmojiIsSelected {
+                    gestureEmojiOffset = latestDragGestureValue.translation / zoomScale
+                }
+            }
+            .onEnded { finalDragGestureValue in
+                let offset = finalDragGestureValue.translation / zoomScale
+                if draggedEmojiIsSelected {
+                    for selectedEmoji in selectedEmojis {
+                        document.moveEmoji(selectedEmoji, by: offset)
+                    }
+                }
+                selectedEmojis = []
+            }
+    }
+    
+    @State private var selectedEmojis: Set<EmojiArtModel.Emoji> = []
+    
+    private var hasSelection: Bool {
+        !selectedEmojis.isEmpty
+    }
+    
+    private func emojiIsSelected(_ emoji: EmojiArtModel.Emoji) -> Bool {
+        return selectedEmojis.contains(emoji)
     }
     
     private func drop(providers: [NSItemProvider], at location: CGPoint, in geometry: GeometryProxy) -> Bool {
@@ -117,7 +186,15 @@ struct EmojiArtDocumentView: View {
     @GestureState private var gestureZoomScale: CGFloat = 1 // extra credit ass5 this might be tuple or struct
     
     private var zoomScale: CGFloat {
-        steadyStateZoomScale * gestureZoomScale
+        steadyStateZoomScale * (hasSelection ? 1 : gestureZoomScale)
+    }
+    
+    private func emojiZoomScale(for emoji: EmojiArtModel.Emoji) -> CGFloat {
+        if emojiIsSelected(emoji) {
+            return steadyStateZoomScale * gestureZoomScale
+        } else {
+            return zoomScale
+        }
     }
     
     private func zoomGesture() -> some Gesture {
@@ -126,7 +203,14 @@ struct EmojiArtDocumentView: View {
                 ourGestureStateInOut = latestGestureScale
             }
             .onEnded { gestureScaleAtEnd in
-                steadyStateZoomScale *= gestureScaleAtEnd
+                if hasSelection {
+                    for selectedEmoji in selectedEmojis {
+                        document.scaleEmoji(selectedEmoji, by: gestureScaleAtEnd)
+                    }
+                    selectedEmojis = []
+                } else {
+                    steadyStateZoomScale *= gestureScaleAtEnd
+                }
             }
     }
     
