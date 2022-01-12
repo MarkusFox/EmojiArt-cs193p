@@ -10,16 +10,60 @@ import SwiftUI
 class EmojiArtDocument: ObservableObject {
     @Published private(set) var emojiArt: EmojiArtModel {
         didSet {
+            scheduleAutoSave()
             if emojiArt.background != oldValue.background {
                 fetchBackgroundImageDataIfNecessary()
             }
         }
     }
     
+    private var autoSaveTimer: Timer?
+    
+    private func scheduleAutoSave() {
+        autoSaveTimer?.invalidate()
+        autoSaveTimer = Timer.scheduledTimer(withTimeInterval: Autosave.coalescingInterval, repeats: false) { _ in
+            self.autoSave()
+        }
+    }
+    
+    private struct Autosave {
+        static let filename = "Autosaved.emojiart"
+        static var url: URL? {
+            let documentDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first // iOS always userDomainMask
+            return documentDirectory?.appendingPathComponent(filename)
+        }
+        static let coalescingInterval = 5.0
+    }
+    
+    private func autoSave() {
+        if let url = Autosave.url {
+            save(to: url)
+        }
+    }
+    
+    private func save(to url: URL) {
+        let thisFunction = "\(String(describing: self)).\(#function)"
+        do {
+            let data: Data = try emojiArt.json()
+            print("\(thisFunction) json = \(String(data: data, encoding: .utf8) ?? "nil")")
+            try data.write(to: url)
+            print("\(thisFunction) success!")
+        } catch let encodingError where encodingError is EncodingError {
+            print("\(thisFunction) could not encode EmojiArt as JSON because \(encodingError.localizedDescription)")
+        } catch {
+            print("\(thisFunction) error = \(error)")
+        }
+    }
+    
     init() {
-        emojiArt = EmojiArtModel()
-        emojiArt.addEmoji("🌈", at: (-200, -100), size: 80)
-        emojiArt.addEmoji("❄️", at: (50, 100), size: 40)
+        if let url = Autosave.url, let autoSavedEmojiArt = try? EmojiArtModel(url: url) {
+            emojiArt = autoSavedEmojiArt
+            fetchBackgroundImageDataIfNecessary()
+        } else {
+            emojiArt = EmojiArtModel()
+    //        emojiArt.addEmoji("🌈", at: (-200, -100), size: 80)
+    //        emojiArt.addEmoji("❄️", at: (50, 100), size: 40)
+        }
     }
     
     var emojis: [EmojiArtModel.Emoji] { emojiArt.emojis }
